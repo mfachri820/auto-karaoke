@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_primary">#BB86FC</color>
-    <color name="purple_dark">#3700B3</color>
-    <color name="teal_accent">#03DAC5</color>
-    <color name="background_dark">#121212</color>
-    <color name="surface_dark">#1E1E2E</color>
-    <color name="on_surface">#E0E0FF</color>
-    <color name="text_secondary">#8888AA</color>
-    <color name="status_ok">#2E7D32</color>
-    <color name="status_warn">#E65100</color>
+    <!-- Night-drive palette -->
+    <color name="night">#151726</color>
+    <color name="night_deep">#0E0F1C</color>
+    <color name="asphalt">#1E2133</color>
+    <color name="asphalt_glass">#E61E2133</color>
+    <color name="lane">#2B2F45</color>
+    <color name="lane_bright">#3A3F5C</color>
+    <color name="headlight">#F4EFE6</color>
+    <color name="dusk">#9A9DB5</color>
+    <color name="dusk_dim">#6B6F88</color>
+    <color name="sodium">#FFB547</color>
+    <color name="on_sodium">#2A1A00</color>
+    <color name="sodium_wash">#33FFB547</color>
+    <color name="ripple_light">#26FFFFFF</color>
 </resources>

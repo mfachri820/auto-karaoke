@@ -1,11 +1,126 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.AutoLyrics" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/purple_primary</item>
-        <item name="colorPrimaryVariant">@color/purple_dark</item>
-        <item name="colorSecondary">@color/teal_accent</item>
-        <item name="android:statusBarColor">@color/surface_dark</item>
-        <item name="android:navigationBarColor">@color/background_dark</item>
-        <item name="android:windowBackground">@color/background_dark</item>
+
+    <style name="Theme.AutoLyrics" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">@color/sodium</item>
+        <item name="colorPrimaryVariant">@color/sodium</item>
+        <item name="colorOnPrimary">@color/on_sodium</item>
+        <item name="colorSecondary">@color/sodium</item>
+        <item name="colorSecondaryVariant">@color/sodium</item>
+        <item name="colorOnSecondary">@color/on_sodium</item>
+        <item name="colorSurface">@color/asphalt</item>
+        <item name="colorOnSurface">@color/headlight</item>
+        <item name="colorControlActivated">@color/sodium</item>
+        <item name="colorControlNormal">@color/dusk</item>
+        <item name="colorSwitchThumbNormal">@color/dusk</item>
+        <item name="android:colorBackground">@color/night</item>
+        <item name="android:textColorPrimary">@color/headlight</item>
+        <item name="android:textColorSecondary">@color/dusk</item>
+        <item name="android:statusBarColor">@color/night</item>
+        <item name="android:navigationBarColor">@color/night_deep</item>
+        <item name="android:windowBackground">@color/night</item>
+        <item name="android:fontFamily">@font/jakarta</item>
+        <item name="fontFamily">@font/jakarta</item>
     </style>
+
+    <!-- Buttons -->
+
+    <style name="Widget.AutoLyrics.Chip" parent="Widget.MaterialComponents.Button.UnelevatedButton">
+        <item name="android:fontFamily">@font/jakarta_semibold</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/headlight</item>
+        <item name="backgroundTint">@color/lane</item>
+        <item name="rippleColor">@color/ripple_light</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">44dp</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+        <item name="android:maxLines">1</item>
+    </style>
+
+    <style name="Widget.AutoLyrics.Chip.Square" parent="Widget.AutoLyrics.Chip">
+        <item name="android:minWidth">44dp</item>
+        <item name="android:paddingStart">0dp</item>
+        <item name="android:paddingEnd">0dp</item>
+        <item name="android:textSize">18sp</item>
+    </style>
+
+    <style name="Widget.AutoLyrics.Chip.Quiet" parent="Widget.AutoLyrics.Chip">
+        <item name="android:textColor">@color/dusk</item>
+        <item name="backgroundTint">@android:color/transparent</item>
+        <item name="strokeColor">@color/lane</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <style name="Widget.AutoLyrics.Accent" parent="Widget.MaterialComponents.Button.UnelevatedButton">
+        <item name="android:fontFamily">@font/jakarta_bold</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/on_sodium</item>
+        <item name="backgroundTint">@color/sodium</item>
+        <item name="rippleColor">#33000000</item>
+        <item name="cornerRadius">24dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingStart">22dp</item>
+        <item name="android:paddingEnd">22dp</item>
+    </style>
+
+    <style name="Widget.AutoLyrics.TopAction" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="android:fontFamily">@font/jakarta_semibold</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/headlight</item>
+        <item name="iconTint">@color/headlight</item>
+        <item name="iconSize">18dp</item>
+        <item name="iconPadding">6dp</item>
+        <item name="strokeColor">@color/lane_bright</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="rippleColor">@color/ripple_light</item>
+        <item name="cornerRadius">20dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:minHeight">40dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">16dp</item>
+    </style>
+
+    <!-- Text -->
+
+    <style name="AutoLyricsSectionTitle" parent="">
+        <item name="android:fontFamily">@font/jakarta_bold</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/headlight</item>
+    </style>
+
+    <style name="AutoLyricsRowLabel" parent="">
+        <item name="android:fontFamily">@font/jakarta_medium</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/dusk</item>
+    </style>
+
+    <style name="AutoLyricsHint" parent="">
+        <item name="android:fontFamily">@font/jakarta_regular</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/dusk_dim</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+    </style>
+
+    <style name="AutoLyricsValue" parent="">
+        <item name="android:fontFamily">@font/jakarta_semibold</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/headlight</item>
+        <item name="android:gravity">center</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+    </style>
+
 </resources>

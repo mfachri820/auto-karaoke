@@ -2,14 +2,14 @@ package com.autolyrics
 
 import android.animation.ValueAnimator
 import android.graphics.Color
-import android.graphics.Typeface
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.AbsoluteSizeSpan
-import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
-import android.text.style.StyleSpan
 import android.view.View
 import android.view.WindowManager
 import android.view.animation.OvershootInterpolator
@@ -66,6 +66,13 @@ class PerformanceActivity : AppCompatActivity() {
         nextLine = findViewById(R.id.perf_next_line)
         exitHint = findViewById(R.id.perf_exit_hint)
 
+        albumArt.clipToOutline = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Soft glow of the album art behind the lyrics (Android 12+).
+            albumBg.setRenderEffect(RenderEffect.createBlurEffect(90f, 90f, Shader.TileMode.CLAMP))
+            albumBg.alpha = 0.6f
+        }
+
         root.setOnClickListener { finish() }
 
         exitHint.animate().alpha(0f).setStartDelay(3000).setDuration(1000).start()
@@ -109,7 +116,7 @@ class PerformanceActivity : AppCompatActivity() {
         }
 
         if (state.source.isNotBlank()) {
-            sourceLabel.text = state.source
+            sourceLabel.text = state.source.substringBefore(" · ").trim()
             sourceLabel.visibility = View.VISIBLE
         } else {
             sourceLabel.visibility = View.GONE
@@ -126,7 +133,7 @@ class PerformanceActivity : AppCompatActivity() {
             }
             LyricsStatus.LOADING -> {
                 prevLine.text = ""
-                currentLine.text = "Loading lyrics…"
+                currentLine.text = "Finding lyrics…"
                 nextLine.text = ""
             }
             LyricsStatus.NOT_FOUND -> {
@@ -136,7 +143,7 @@ class PerformanceActivity : AppCompatActivity() {
             }
             LyricsStatus.ERROR -> {
                 prevLine.text = ""
-                currentLine.text = "Error loading lyrics"
+                currentLine.text = "Couldn't load lyrics"
                 nextLine.text = ""
             }
             LyricsStatus.PLAIN_ONLY -> {
@@ -203,17 +210,15 @@ class PerformanceActivity : AppCompatActivity() {
             wordPopAnimator?.cancel()
 
             val baseSizePx = currentLine.textSize.toInt()
-            val targetSizePx = (baseSizePx * 1.5).toInt()
-            val accentBg = setAlpha(accentColor, 0.30f)
 
-            wordPopAnimator = ValueAnimator.ofFloat(1.0f, 1.5f).apply {
-                duration = 220
-                interpolator = OvershootInterpolator(1.5f)
+            wordPopAnimator = ValueAnimator.ofFloat(1.0f, 1.12f).apply {
+                duration = 200
+                interpolator = OvershootInterpolator(1.4f)
                 addUpdateListener { anim ->
                     val scale = anim.animatedValue as Float
                     val sizePx = (baseSizePx * scale).toInt()
                     currentLine.text = buildKaraokeSpannable(
-                        line, wordIdx, sizePx, accentColor, accentBg
+                        line, wordIdx, sizePx, accentColor
                     )
                 }
                 start()
@@ -228,8 +233,7 @@ class PerformanceActivity : AppCompatActivity() {
         line: LyricLine,
         activeWordIdx: Int,
         activeSizePx: Int,
-        accentColor: Int,
-        accentBg: Int
+        accentColor: Int
     ): SpannableStringBuilder {
         val ssb = SpannableStringBuilder()
         line.words.forEachIndexed { wi, word ->
@@ -237,11 +241,12 @@ class PerformanceActivity : AppCompatActivity() {
             ssb.append(word.text)
             val end = ssb.length
 
+            // Karaoke fill: sung words take the accent color, the word being sung pops.
+            if (wi <= activeWordIdx) {
+                ssb.setSpan(ForegroundColorSpan(accentColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
             if (wi == activeWordIdx) {
                 ssb.setSpan(AbsoluteSizeSpan(activeSizePx), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                ssb.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                ssb.setSpan(ForegroundColorSpan(accentColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                ssb.setSpan(BackgroundColorSpan(accentBg), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
 
             if (wi < line.words.size - 1) ssb.append(" ")
@@ -259,7 +264,7 @@ class PerformanceActivity : AppCompatActivity() {
     }
 
     companion object {
-        private val DEFAULT_ACCENT = Color.parseColor("#FFD54F")
+        private val DEFAULT_ACCENT = Color.parseColor("#FFB547")
 
         private fun setAlpha(color: Int, alpha: Float): Int {
             val a = (alpha * 255).toInt().coerceIn(0, 255)
