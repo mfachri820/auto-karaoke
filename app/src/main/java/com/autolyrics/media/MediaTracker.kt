@@ -9,13 +9,16 @@ import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import com.autolyrics.lyrics.Countdown
 import com.autolyrics.lyrics.LrcLibClient
 import com.autolyrics.lyrics.LrcParser
 import com.autolyrics.lyrics.LyricsCache
 import com.autolyrics.lyrics.LyricsTranslator
 import com.autolyrics.lyrics.MetadataCleaner
+import com.autolyrics.lyrics.Romanizer
 import com.autolyrics.lyrics.SyncLrcClient
 import com.autolyrics.model.LyricLine
+import com.autolyrics.model.LyricsCandidate
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import com.autolyrics.model.TrackInfo
@@ -79,7 +82,10 @@ class MediaTracker private constructor(context: Context) {
             albumArt = art,
             albumColors = null,
             translatedLines = null,
-            detectedLanguage = null
+            detectedLanguage = null,
+            romanizedLines = null,
+            countdownDots = 0,
+            countdownLineIndex = -1
         )
         fetchLyrics(track)
         extractAlbumColors(art)
@@ -164,10 +170,18 @@ class MediaTracker private constructor(context: Context) {
             }
         }
 
-        if (newLineIndex != currentState.currentIndex || newWordIndex != currentState.currentWordIndex) {
+        val countdown = Countdown.compute(lines, posMs)
+
+        if (newLineIndex != currentState.currentIndex ||
+            newWordIndex != currentState.currentWordIndex ||
+            countdown.dots != currentState.countdownDots ||
+            countdown.nextIndex != currentState.countdownLineIndex
+        ) {
             _state.value = currentState.copy(
                 currentIndex = newLineIndex,
-                currentWordIndex = newWordIndex
+                currentWordIndex = newWordIndex,
+                countdownDots = countdown.dots,
+                countdownLineIndex = countdown.nextIndex
             )
         }
     }
@@ -263,18 +277,7 @@ class MediaTracker private constructor(context: Context) {
                 if (cached != null) {
                     val (lines, status, source) = cached
                     withContext(Dispatchers.Main) {
-                        if (_state.value.track != track) return@withContext
-                        _state.value = _state.value.copy(
-                            lines = lines,
-                            currentIndex = -1,
-                            currentWordIndex = -1,
-                            status = status,
-                            source = "$source (cached)"
-                        )
-                        if (status == LyricsStatus.FOUND) {
-                            updateCurrentPosition()
-                        }
-                        translateIfNeeded(lines, track)
+                        setLyrics(track, lines, status, "$source (cached)")
                     }
 
                     val cacheAge = lyricsCache.getAge(track.title, track.artist)
@@ -284,24 +287,14 @@ class MediaTracker private constructor(context: Context) {
                     }
                 }
 
-                val result = fetchFromSyncLrc(track) ?: fetchFromLrcLib(track)
+                val result = fetchPicked(track) ?: fetchFromSyncLrc(track) ?: fetchFromLrcLib(track)
 
                 withContext(Dispatchers.Main) {
                     if (_state.value.track != track) return@withContext
 
                     if (result != null) {
                         lyricsCache.put(track.title, track.artist, result.lines, result.status, result.source)
-                        _state.value = _state.value.copy(
-                            lines = result.lines,
-                            currentIndex = -1,
-                            currentWordIndex = -1,
-                            status = result.status,
-                            source = result.source
-                        )
-                        if (result.status == LyricsStatus.FOUND) {
-                            updateCurrentPosition()
-                        }
-                        translateIfNeeded(result.lines, track)
+                        setLyrics(track, result.lines, result.status, result.source)
                     } else if (cached == null) {
                         _state.value = _state.value.copy(
                             status = LyricsStatus.NOT_FOUND,
@@ -353,7 +346,7 @@ class MediaTracker private constructor(context: Context) {
                     if (lyricsCache.get(title, artist) != null) return@launch
 
                     val nextTrack = TrackInfo(title, artist, "", 0)
-                    val result = fetchFromSyncLrc(nextTrack) ?: fetchFromLrcLib(nextTrack)
+                    val result = fetchPicked(nextTrack) ?: fetchFromSyncLrc(nextTrack) ?: fetchFromLrcLib(nextTrack)
                     if (result != null) {
                         lyricsCache.put(title, artist, result.lines, result.status, result.source)
                     }
@@ -415,20 +408,158 @@ class MediaTracker private constructor(context: Context) {
             null
         } ?: return null
 
-        if (result.syncedLyrics != null) {
-            val lines = LrcParser.parse(result.syncedLyrics)
+        return lyricsToResult(result.syncedLyrics, result.plainLyrics, "LRCLIB")
+    }
+
+    /** Turns LRCLIB lyrics text into lines, preferring the timed version. */
+    private fun lyricsToResult(synced: String?, plain: String?, provider: String): FetchResult? {
+        if (!synced.isNullOrBlank()) {
+            val lines = LrcParser.parse(synced)
             val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
-            if (hasRealText) return FetchResult(lines, LyricsStatus.FOUND, "LRCLIB · Synced")
+            if (hasRealText) return FetchResult(lines, LyricsStatus.FOUND, "$provider · Synced")
         }
 
-        if (result.plainLyrics != null) {
-            val lines = result.plainLyrics.lines()
+        if (!plain.isNullOrBlank()) {
+            val lines = plain.lines()
                 .filter { it.isNotBlank() }
                 .map { text -> LyricLine(0L, text) }
-            if (lines.isNotEmpty()) return FetchResult(lines, LyricsStatus.PLAIN_ONLY, "LRCLIB · Plain")
+            if (lines.isNotEmpty()) return FetchResult(lines, LyricsStatus.PLAIN_ONLY, "$provider · Plain")
         }
 
         return null
+    }
+
+    // --- Lyrics the user picked with "Wrong lyrics?" ---
+
+    private fun pickKey(title: String, artist: String): String =
+        "lyrics_pick_${title.lowercase().trim()}|${artist.lowercase().trim()}"
+
+    private fun fetchPicked(track: TrackInfo): FetchResult? {
+        val id = prefs.getInt(pickKey(track.title, track.artist), -1)
+        if (id <= 0) return null
+        val result = try {
+            LrcLibClient.getById(id)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        return lyricsToResult(result.syncedLyrics, result.plainLyrics, "Your pick")
+    }
+
+    /** True when the current song uses lyrics the user picked by hand. */
+    fun hasPickedLyrics(): Boolean {
+        val track = _state.value.track ?: return false
+        return prefs.getInt(pickKey(track.title, track.artist), -1) > 0
+    }
+
+    /**
+     * Other lyrics matches for the current song, best first. Pass [query] to search
+     * by free text instead of the song's own title and artist.
+     */
+    suspend fun searchAlternatives(query: String? = null): List<LyricsCandidate> =
+        withContext(Dispatchers.IO) {
+            val track = _state.value.track ?: return@withContext emptyList()
+            val raw = try {
+                if (query.isNullOrBlank()) {
+                    LrcLibClient.searchCandidates(track.title, track.artist)
+                } else {
+                    LrcLibClient.searchQuery(query)
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            val targetSec = (track.durationMs / 1000).toInt()
+            raw.mapNotNull { r ->
+                val id = r.id ?: return@mapNotNull null
+                if (r.syncedLyrics.isNullOrBlank() && r.plainLyrics.isNullOrBlank()) return@mapNotNull null
+                LyricsCandidate(
+                    id = id,
+                    title = r.trackName.orEmpty(),
+                    artist = r.artistName.orEmpty(),
+                    album = r.albumName.orEmpty(),
+                    durationSec = r.duration?.toInt() ?: 0,
+                    syncedLyrics = r.syncedLyrics,
+                    plainLyrics = r.plainLyrics
+                )
+            }
+                .distinctBy { it.id }
+                .sortedWith(
+                    compareBy<LyricsCandidate> { if (it.syncedLyrics.isNullOrBlank()) 1 else 0 }
+                        .thenBy {
+                            if (targetSec > 0 && it.durationSec > 0) kotlin.math.abs(it.durationSec - targetSec)
+                            else Int.MAX_VALUE
+                        }
+                )
+                .take(25)
+        }
+
+    /** Uses [candidate] for the current song now and every time it plays later. */
+    fun applyCandidate(candidate: LyricsCandidate): Boolean {
+        val track = _state.value.track ?: return false
+        val result = lyricsToResult(candidate.syncedLyrics, candidate.plainLyrics, "Your pick")
+            ?: return false
+        prefs.edit().putInt(pickKey(track.title, track.artist), candidate.id).apply()
+        lyricsCache.put(track.title, track.artist, result.lines, result.status, result.source)
+        setLyrics(track, result.lines, result.status, result.source)
+        return true
+    }
+
+    /** Forgets the user's pick and goes back to the automatic match. */
+    fun clearPickedLyrics() {
+        val track = _state.value.track ?: return
+        prefs.edit().remove(pickKey(track.title, track.artist)).apply()
+        lyricsCache.remove(track.title, track.artist)
+        translationJob?.cancel()
+        _state.value = _state.value.copy(
+            lines = emptyList(),
+            currentIndex = -1,
+            currentWordIndex = -1,
+            status = LyricsStatus.LOADING,
+            source = "",
+            translatedLines = null,
+            detectedLanguage = null,
+            romanizedLines = null,
+            countdownDots = 0,
+            countdownLineIndex = -1
+        )
+        fetchLyrics(track)
+    }
+
+    // --- Shared state updates ---
+
+    /** Shows new lyrics for [track] (if it's still playing) and starts translation/pronunciation. */
+    private fun setLyrics(track: TrackInfo, lines: List<LyricLine>, status: LyricsStatus, source: String) {
+        if (_state.value.track != track) return
+        _state.value = _state.value.copy(
+            lines = lines,
+            currentIndex = -1,
+            currentWordIndex = -1,
+            status = status,
+            source = source,
+            translatedLines = null,
+            detectedLanguage = null,
+            romanizedLines = romanizeIfEnabled(lines),
+            countdownDots = 0,
+            countdownLineIndex = -1
+        )
+        if (status == LyricsStatus.FOUND) {
+            updateCurrentPosition()
+        }
+        translateIfNeeded(lines, track)
+    }
+
+    private fun romanizeIfEnabled(lines: List<LyricLine>): List<String>? {
+        if (!prefs.getBoolean("romanization_enabled", true)) return null
+        return try {
+            Romanizer.romanizeLines(lines.map { it.text })
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Re-applies the pronunciation setting to the lyrics on screen. */
+    fun refreshRomanization() {
+        val current = _state.value
+        _state.value = current.copy(romanizedLines = romanizeIfEnabled(current.lines))
     }
 
     private fun translateIfNeeded(lines: List<LyricLine>, track: TrackInfo) {

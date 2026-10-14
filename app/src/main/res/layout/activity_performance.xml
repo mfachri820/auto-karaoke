@@ -124,6 +124,21 @@
             android:textColor="@color/headlight"
             android:textSize="38sp" />
 
+        <!-- Pronunciation (Korean / Japanese) under the current line -->
+        <TextView
+            android:id="@+id/perf_current_roman"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/jakarta_semibold"
+            android:gravity="center"
+            android:lineSpacingMultiplier="1.1"
+            android:paddingStart="28dp"
+            android:paddingEnd="28dp"
+            android:paddingBottom="8dp"
+            android:textColor="#D9F4EFE6"
+            android:textSize="21sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/perf_next_line"
             android:layout_width="match_parent"

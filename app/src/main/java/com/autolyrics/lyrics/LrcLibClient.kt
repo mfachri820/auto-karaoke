@@ -24,7 +24,7 @@ object LrcLibClient {
         @SerializedName("trackName") val trackName: String?,
         @SerializedName("artistName") val artistName: String?,
         @SerializedName("albumName") val albumName: String?,
-        @SerializedName("duration") val duration: Int?,
+        @SerializedName("duration") val duration: Double?,
         @SerializedName("instrumental") val instrumental: Boolean?,
         @SerializedName("plainLyrics") val plainLyrics: String?,
         @SerializedName("syncedLyrics") val syncedLyrics: String?
@@ -68,6 +68,54 @@ object LrcLibClient {
         if (plainResult != null) return plainResult
 
         return null
+    }
+
+    /** Lyrics for a specific LRCLIB record (used to remember a user's pick). */
+    fun getById(id: Int): LrcLibResponse? {
+        val request = Request.Builder()
+            .url("$BASE_URL/get/$id")
+            .header("User-Agent", USER_AGENT)
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    gson.fromJson(response.body?.string(), LrcLibResponse::class.java)
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Wider search for the "Wrong lyrics?" picker: same artist, any artist, then free text. */
+    fun searchCandidates(trackName: String, artistName: String): List<LrcLibResponse> {
+        val out = mutableListOf<LrcLibResponse>()
+        out += searchAll(trackName, artistName)
+        if (artistName.isNotBlank()) out += searchAll(trackName, "")
+        out += searchQuery("$trackName $artistName".trim())
+        return out
+    }
+
+    /** Free-text search across title, artist and album. */
+    fun searchQuery(query: String): List<LrcLibResponse> {
+        if (query.isBlank()) return emptyList()
+        val url = "$BASE_URL/search".toHttpUrl().newBuilder()
+            .addQueryParameter("q", query)
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val type = object : TypeToken<List<LrcLibResponse>>() {}.type
+                    gson.fromJson<List<LrcLibResponse>>(response.body?.string(), type) ?: emptyList()
+                } else emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun withinDuration(result: LrcLibResponse, durationSec: Int): Boolean {

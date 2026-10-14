@@ -82,6 +82,12 @@ class LyricsCache(context: Context) {
         }
     }
 
+    fun remove(title: String, artist: String) {
+        try {
+            cacheFile(title, artist).delete()
+        } catch (_: Exception) { }
+    }
+
     fun getAge(title: String, artist: String): Long {
         val file = cacheFile(title, artist)
         if (!file.exists()) return Long.MAX_VALUE

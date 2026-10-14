@@ -136,20 +136,17 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tv_source"
+        <Button
+            android:id="@+id/btn_wrong_lyrics"
+            style="@style/Widget.AutoLyrics.Chip.Quiet"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="36dp"
             android:layout_marginStart="10dp"
-            android:background="@drawable/bg_source_pill"
-            android:fontFamily="@font/jakarta_semibold"
-            android:maxLines="1"
-            android:paddingStart="10dp"
-            android:paddingTop="4dp"
-            android:paddingEnd="10dp"
-            android:paddingBottom="4dp"
-            android:textColor="@color/dusk"
-            android:textSize="11sp"
+            android:minHeight="36dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:text="Wrong lyrics?"
+            android:textSize="12sp"
             android:visibility="gone" />
     </LinearLayout>
 
@@ -350,6 +347,41 @@
 
                     <androidx.appcompat.widget.SwitchCompat
                         android:id="@+id/switch_translation"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center_vertical"
+                    android:minHeight="48dp"
+                    android:orientation="horizontal">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="12dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/AutoLyricsRowLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Show pronunciation" />
+
+                        <TextView
+                            style="@style/AutoLyricsHint"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="Latin letters under Korean and Japanese lyrics. Japanese kanji stay as written." />
+                    </LinearLayout>
+
+                    <androidx.appcompat.widget.SwitchCompat
+                        android:id="@+id/switch_romanization"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content" />
                 </LinearLayout>

@@ -23,6 +23,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.autolyrics.lyrics.Countdown
 import com.autolyrics.media.MediaTracker
 import com.autolyrics.model.LyricLine
 import com.autolyrics.model.LyricsState
@@ -40,11 +41,13 @@ class PerformanceActivity : AppCompatActivity() {
     private lateinit var sourceLabel: TextView
     private lateinit var prevLine: TextView
     private lateinit var currentLine: TextView
+    private lateinit var currentRoman: TextView
     private lateinit var nextLine: TextView
     private lateinit var exitHint: TextView
 
     private var lastRenderedIndex = -1
     private var lastRenderedWord = -1
+    private var lastRenderedCountdown = -1
     private var wordPopAnimator: ValueAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,6 +66,7 @@ class PerformanceActivity : AppCompatActivity() {
         sourceLabel = findViewById(R.id.perf_source)
         prevLine = findViewById(R.id.perf_prev_line)
         currentLine = findViewById(R.id.perf_current_line)
+        currentRoman = findViewById(R.id.perf_current_roman)
         nextLine = findViewById(R.id.perf_next_line)
         exitHint = findViewById(R.id.perf_exit_hint)
 
@@ -125,6 +129,14 @@ class PerformanceActivity : AppCompatActivity() {
         val colors = state.albumColors
         val accentColor = colors?.vibrant ?: DEFAULT_ACCENT
 
+        if (state.status != LyricsStatus.FOUND) {
+            // Make sure synced lyrics redraw fully when they (re)appear.
+            lastRenderedIndex = -1
+            lastRenderedWord = -1
+            lastRenderedCountdown = -1
+            if (state.status != LyricsStatus.PLAIN_ONLY) setRoman(null)
+        }
+
         when (state.status) {
             LyricsStatus.NO_MEDIA -> {
                 prevLine.text = ""
@@ -174,9 +186,10 @@ class PerformanceActivity : AppCompatActivity() {
                 .coerceIn(0, lines.size - 1)
         } else 0
 
-        updateSideLine(prevLine, lines.getOrNull(idx - 1)?.text)
+        updateSideLine(prevLine, sideText(state, idx - 1))
         currentLine.text = lines[idx].text.ifBlank { "♪" }
-        updateSideLine(nextLine, lines.getOrNull(idx + 1)?.text)
+        setRoman(state.romanizedLines?.getOrNull(idx))
+        updateSideLine(nextLine, sideText(state, idx + 1))
     }
 
     private fun renderSynced(state: LyricsState, accentColor: Int) {
@@ -184,10 +197,35 @@ class PerformanceActivity : AppCompatActivity() {
         val wordIdx = state.currentWordIndex
         val lines = state.lines
 
+        // Countdown dots before singing comes back in.
+        if (state.countdownDots > 0 && state.countdownLineIndex in lines.indices) {
+            val key = state.countdownDots * 10_000 + state.countdownLineIndex
+            if (key != lastRenderedCountdown) {
+                lastRenderedCountdown = key
+                wordPopAnimator?.cancel()
+                currentLine.text = countdownText(state.countdownDots, accentColor)
+                setRoman(null)
+                val justSung = lines.getOrNull(idx)?.takeIf { Countdown.isVocal(it) }
+                updateSideLine(prevLine, if (justSung != null) sideText(state, idx) else null)
+                updateSideLine(nextLine, sideText(state, state.countdownLineIndex))
+                // Force a full redraw once the countdown ends.
+                lastRenderedIndex = -2
+                lastRenderedWord = -2
+            }
+            return
+        }
+        lastRenderedCountdown = -1
+
         if (idx < 0 || idx >= lines.size) {
+            // Intro: show what's coming up first.
+            wordPopAnimator?.cancel()
             prevLine.text = ""
             currentLine.text = "♪"
-            nextLine.text = ""
+            setRoman(null)
+            val firstVocal = lines.indexOfFirst { Countdown.isVocal(it) }
+            nextLine.text = sideText(state, firstVocal) ?: ""
+            lastRenderedIndex = -1
+            lastRenderedWord = -1
             return
         }
 
@@ -199,8 +237,9 @@ class PerformanceActivity : AppCompatActivity() {
         lastRenderedWord = wordIdx
 
         if (lineChanged) {
-            updateSideLine(prevLine, lines.getOrNull(idx - 1)?.text)
-            updateSideLine(nextLine, lines.getOrNull(idx + 1)?.text)
+            updateSideLine(prevLine, sideText(state, idx - 1))
+            updateSideLine(nextLine, sideText(state, idx + 1))
+            setRoman(state.romanizedLines?.getOrNull(idx))
         }
 
         val line = lines[idx]
@@ -250,6 +289,35 @@ class PerformanceActivity : AppCompatActivity() {
             }
 
             if (wi < line.words.size - 1) ssb.append(" ")
+        }
+        return ssb
+    }
+
+    /** Text for the lines above/below: the pronunciation when there is one, since that's what gets sung. */
+    private fun sideText(state: LyricsState, index: Int): String? {
+        val line = state.lines.getOrNull(index) ?: return null
+        val roman = state.romanizedLines?.getOrNull(index)
+        return if (!roman.isNullOrBlank()) roman else line.text
+    }
+
+    private fun setRoman(text: String?) {
+        if (text.isNullOrBlank()) {
+            currentRoman.text = ""
+            currentRoman.visibility = View.GONE
+        } else {
+            currentRoman.text = text
+            currentRoman.visibility = View.VISIBLE
+        }
+    }
+
+    private fun countdownText(dots: Int, accentColor: Int): SpannableStringBuilder {
+        val ssb = SpannableStringBuilder()
+        for (k in 1..Countdown.DOTS) {
+            val start = ssb.length
+            ssb.append("●")
+            val color = if (k <= dots) accentColor else setAlpha(accentColor, 0.22f)
+            ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (k < Countdown.DOTS) ssb.append("   ")
         }
         return ssb
     }

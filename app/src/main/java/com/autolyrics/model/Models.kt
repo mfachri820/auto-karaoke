@@ -49,5 +49,22 @@ data class LyricsState(
     val albumArt: Bitmap? = null,
     val albumColors: AlbumColors? = null,
     val translatedLines: List<String>? = null,
-    val detectedLanguage: String? = null
+    val detectedLanguage: String? = null,
+    /** Latin-letter pronunciation per line for Korean/Japanese lyrics, or null. */
+    val romanizedLines: List<String>? = null,
+    /** Countdown dots left before singing resumes (0 = no countdown). */
+    val countdownDots: Int = 0,
+    /** Line the countdown is leading into, or -1. */
+    val countdownLineIndex: Int = -1
+)
+
+/** Another lyrics match the user can pick when the automatic one is wrong. */
+data class LyricsCandidate(
+    val id: Int,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationSec: Int,
+    val syncedLyrics: String?,
+    val plainLyrics: String?
 )

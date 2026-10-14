@@ -19,7 +19,11 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -35,8 +39,10 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.autolyrics.media.MediaListenerService
 import com.autolyrics.media.MediaTracker
 import com.autolyrics.model.AlbumColors
+import com.autolyrics.model.LyricsCandidate
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -50,7 +56,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var ivAlbumArt: ImageView
     private lateinit var tvTrack: TextView
     private lateinit var tvArtist: TextView
-    private lateinit var tvSource: TextView
+    private lateinit var btnWrongLyrics: Button
+    private lateinit var switchRomanization: SwitchCompat
     private lateinit var tvLyrics: TextView
     private lateinit var scrollView: ScrollView
     private lateinit var tvDelay: TextView
@@ -101,7 +108,8 @@ class MainActivity : AppCompatActivity() {
         ivAlbumArt = findViewById(R.id.iv_album_art)
         tvTrack = findViewById(R.id.tv_track)
         tvArtist = findViewById(R.id.tv_artist)
-        tvSource = findViewById(R.id.tv_source)
+        btnWrongLyrics = findViewById(R.id.btn_wrong_lyrics)
+        btnWrongLyrics.setOnClickListener { openLyricsPicker(null) }
         tvLyrics = findViewById(R.id.tv_lyrics)
         scrollView = findViewById(R.id.scroll_lyrics)
         tvDelay = findViewById(R.id.tv_delay)
@@ -191,6 +199,13 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean("translation_enabled", isChecked).apply()
         }
 
+        switchRomanization = findViewById(R.id.switch_romanization)
+        switchRomanization.isChecked = prefs.getBoolean("romanization_enabled", true)
+        switchRomanization.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("romanization_enabled", isChecked).apply()
+            mediaTracker.refreshRomanization()
+        }
+
         findViewById<Button>(R.id.btn_aa_delay_minus).setOnClickListener {
             aaOffsetMs -= 100
             prefs.edit().putLong("aa_offset_ms", aaOffsetMs).apply()
@@ -250,15 +265,17 @@ class MainActivity : AppCompatActivity() {
                         tvArtist.visibility = View.GONE
                     }
 
-                    if (state.source.isNotBlank()) {
-                        val provider = state.source.substringBefore(" · ").trim()
-                        val lang = state.detectedLanguage
-                        tvSource.text = if (lang != null) {
-                            "$provider / ${lang.uppercase()}→EN"
-                        } else provider
-                        tvSource.visibility = View.VISIBLE
-                    } else {
-                        tvSource.visibility = View.GONE
+                    when {
+                        track == null -> btnWrongLyrics.visibility = View.GONE
+                        state.status == LyricsStatus.FOUND || state.status == LyricsStatus.PLAIN_ONLY -> {
+                            btnWrongLyrics.text = "Wrong lyrics?"
+                            btnWrongLyrics.visibility = View.VISIBLE
+                        }
+                        state.status == LyricsStatus.NOT_FOUND || state.status == LyricsStatus.ERROR -> {
+                            btnWrongLyrics.text = "Search lyrics"
+                            btnWrongLyrics.visibility = View.VISIBLE
+                        }
+                        else -> btnWrongLyrics.visibility = View.GONE
                     }
 
                     if (state.status != LyricsStatus.PLAIN_ONLY) {
@@ -278,7 +295,7 @@ class MainActivity : AppCompatActivity() {
                             showMessage("Finding lyrics…")
                         }
                         LyricsStatus.NOT_FOUND -> {
-                            showMessage("No lyrics found for this song.")
+                            showMessage("No lyrics found for this song. Tap Search lyrics to look it up by name.")
                         }
                         LyricsStatus.ERROR -> {
                             showMessage("Couldn't load lyrics. Check your internet connection and try the song again.")
@@ -373,6 +390,12 @@ class MainActivity : AppCompatActivity() {
 
         state.lines.forEachIndexed { i, line ->
             val isCurrentLine = i == state.currentIndex
+
+            if (state.countdownDots > 0 && i == state.countdownLineIndex) {
+                appendCountdown(ssb, state.countdownDots, accent)
+                ssb.append("\n")
+            }
+
             val lineStart = ssb.length
             if (isCurrentLine) currentLineCharStart = lineStart
 
@@ -399,6 +422,28 @@ class MainActivity : AppCompatActivity() {
                 ssb.setSpan(
                     ForegroundColorSpan(color),
                     lineStart, ssb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            val romanized = state.romanizedLines?.getOrNull(i)
+            if (!romanized.isNullOrBlank()) {
+                ssb.append("\n")
+                val rStart = ssb.length
+                ssb.append(romanized)
+                ssb.setSpan(
+                    RelativeSizeSpan(0.82f),
+                    rStart, ssb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                val romanColor = when {
+                    isCurrentLine -> withAlpha(primary, 0.85f)
+                    i < state.currentIndex -> past
+                    else -> upcoming
+                }
+                ssb.setSpan(
+                    ForegroundColorSpan(romanColor),
+                    rStart, ssb.length,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
             }
@@ -455,6 +500,19 @@ class MainActivity : AppCompatActivity() {
             sb.append(line.text.ifBlank { "♪" })
             sb.setSpan(ForegroundColorSpan(lineColor), lineStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
+            val roman = state.romanizedLines?.getOrNull(i)
+            if (!roman.isNullOrBlank()) {
+                sb.append("\n")
+                val rStart = sb.length
+                sb.append(roman)
+                sb.setSpan(RelativeSizeSpan(0.82f), rStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                sb.setSpan(
+                    ForegroundColorSpan(withAlpha(primary, 0.7f)),
+                    rStart, sb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
             val tl = state.translatedLines?.getOrNull(i)
             if (!tl.isNullOrBlank()) {
                 sb.append("\n")
@@ -471,6 +529,136 @@ class MainActivity : AppCompatActivity() {
         }
         tvLyrics.text = sb
     }
+
+    /** Karaoke countdown: remaining dots in the accent color, spent ones faded. */
+    private fun appendCountdown(ssb: SpannableStringBuilder, dots: Int, accent: Int) {
+        for (k in 1..COUNTDOWN_DOTS) {
+            val start = ssb.length
+            ssb.append("●")
+            val color = if (k <= dots) accent else withAlpha(accent, 0.22f)
+            ssb.setSpan(ForegroundColorSpan(color), start, ssb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (k < COUNTDOWN_DOTS) ssb.append("  ")
+        }
+    }
+
+    // --- "Wrong lyrics?" picker ---
+
+    private fun openLyricsPicker(query: String?) {
+        val track = mediaTracker.state.value.track ?: return
+        val searching = MaterialAlertDialogBuilder(this)
+            .setTitle("Looking for other lyrics…")
+            .setMessage(if (query.isNullOrBlank()) "${track.title} — ${track.artist}" else "“$query”")
+            .setNegativeButton("Cancel", null)
+            .show()
+
+        lifecycleScope.launch {
+            val results = mediaTracker.searchAlternatives(query)
+            if (!searching.isShowing || isFinishing) return@launch
+            searching.dismiss()
+            if (mediaTracker.state.value.track != track) return@launch
+            showLyricsChoices(results)
+        }
+    }
+
+    private fun showLyricsChoices(results: List<LyricsCandidate>) {
+        val track = mediaTracker.state.value.track ?: return
+        val targetSec = (track.durationMs / 1000).toInt()
+        val hasPick = mediaTracker.hasPickedLyrics()
+
+        // Fixed actions first, then the matches.
+        val actions = mutableListOf<Pair<CharSequence, () -> Unit>>()
+        actions += optionLabel("Search by name…", "Type a different title or artist") to {
+            askForSearchText(track.title, track.artist)
+        }
+        if (hasPick) {
+            actions += optionLabel("Use the automatic match", "Forget the lyrics you picked for this song") to {
+                mediaTracker.clearPickedLyrics()
+            }
+        }
+        results.forEach { candidate ->
+            actions += candidateLabel(candidate, targetSec) to {
+                if (!mediaTracker.applyCandidate(candidate)) {
+                    MaterialAlertDialogBuilder(this)
+                        .setMessage("Those lyrics couldn't be read. Try another one.")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }
+        }
+
+        val builder = MaterialAlertDialogBuilder(this)
+            .setTitle(if (results.isEmpty()) "No other versions found" else "Pick the right lyrics")
+            .setNegativeButton("Close", null)
+        builder.setItems(actions.map { it.first }.toTypedArray()) { _, which ->
+            actions.getOrNull(which)?.second?.invoke()
+        }
+        builder.show()
+    }
+
+    private fun askForSearchText(title: String, artist: String) {
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val input = EditText(this).apply {
+            setText("$title $artist".trim())
+            setSelection(text.length)
+            inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = EditorInfo.IME_ACTION_SEARCH
+            setSingleLine(true)
+            setTextColor(HEADLIGHT)
+            setHintTextColor(DUSK)
+            hint = "Song title and artist"
+        }
+        val container = FrameLayout(this).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("Search lyrics by name")
+            .setView(container)
+            .setPositiveButton("Search") { _, _ ->
+                openLyricsPicker(input.text.toString().trim())
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                dialog.dismiss()
+                openLyricsPicker(input.text.toString().trim())
+                true
+            } else false
+        }
+    }
+
+    private fun optionLabel(title: String, detail: String): CharSequence {
+        val sb = SpannableStringBuilder(title)
+        sb.setSpan(ForegroundColorSpan(SODIUM), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.append("\n")
+        val start = sb.length
+        sb.append(detail)
+        sb.setSpan(RelativeSizeSpan(0.85f), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.setSpan(ForegroundColorSpan(DUSK), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return sb
+    }
+
+    private fun candidateLabel(c: LyricsCandidate, targetSec: Int): CharSequence {
+        val sb = SpannableStringBuilder()
+        sb.append(c.title.ifBlank { "Untitled" })
+        if (c.artist.isNotBlank()) sb.append(" — ").append(c.artist)
+        sb.append("\n")
+        val start = sb.length
+        val details = mutableListOf<String>()
+        details += if (!c.syncedLyrics.isNullOrBlank()) "Timed" else "Not timed"
+        if (c.durationSec > 0) {
+            val sameLength = targetSec > 0 && kotlin.math.abs(c.durationSec - targetSec) <= 3
+            details += formatDuration(c.durationSec) + if (sameLength) " (same length as your song)" else ""
+        }
+        if (c.album.isNotBlank()) details += c.album
+        sb.append(details.joinToString(", "))
+        sb.setSpan(RelativeSizeSpan(0.85f), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.setSpan(ForegroundColorSpan(DUSK), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return sb
+    }
+
+    private fun formatDuration(sec: Int): String = "%d:%02d".format(sec / 60, sec % 60)
 
     /** Ends the current line and adds a short blank line before the next one. */
     private fun appendLineGap(ssb: SpannableStringBuilder) {
@@ -729,6 +917,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val COUNTDOWN_DOTS = 3
         private const val DEFAULT_FONT_SIZE = 20
         private const val MIN_FONT_SIZE = 14
         private const val MAX_FONT_SIZE = 34

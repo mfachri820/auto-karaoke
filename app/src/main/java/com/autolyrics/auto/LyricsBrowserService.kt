@@ -13,6 +13,7 @@ import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.media.MediaBrowserServiceCompat
+import com.autolyrics.lyrics.Countdown
 import com.autolyrics.media.MediaTracker
 import com.autolyrics.model.LyricLine
 import com.autolyrics.model.LyricsState
@@ -32,6 +33,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     private var displayedWindowStart = -1
     private var displayedWindowEnd = -1
     private var displayedCurrentIdx = -1
+    private var displayedDots = 0
     private var displayedStatus: LyricsStatus? = null
     private var displayedTrackTitle: String? = null
     private var lastSubtitleText: String? = null
@@ -203,8 +205,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
                     for (i in adjStart until winEnd) {
                         val text = state.lines[i].text.ifBlank { "♪" }
-                        val trans = state.translatedLines?.getOrNull(i)?.takeIf { it.isNotBlank() }
-                        items.add(buildTextItem("line_$i", "    $text", pad = true, subtitle = trans))
+                        items.add(buildTextItem("line_$i", "    $text", pad = true, subtitle = secondLine(state, i)))
                     }
                 }
                 items.add(buildBrowsableItem(SYNC_MENU_ID, "⟳ Sync", "Adjust offset"))
@@ -316,9 +317,14 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         val windowEnd = minOf(lines.size, windowStart + WINDOW_SIZE)
         val adjustedStart = maxOf(0, windowEnd - WINDOW_SIZE)
 
+        val countdown = Countdown.compute(lines, posMs)
+
         for (i in adjustedStart until windowEnd) {
             val line = lines[i]
-            val isCurrent = i == aaCurrentIdx
+            if (countdown.dots > 0 && i == countdown.nextIndex) {
+                items.add(buildTextItem("countdown", "    ${countdownDots(countdown.dots)}"))
+            }
+            val isCurrent = i == aaCurrentIdx && countdown.dots == 0
             val prefix = if (isCurrent) "▶  " else "    "
 
             val text = if (isCurrent && aaKaraokeEnabled && line.words.isNotEmpty()) {
@@ -327,10 +333,18 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 line.text.ifBlank { "♪" }
             }
 
-            val trans = state.translatedLines?.getOrNull(i)?.takeIf { it.isNotBlank() }
-            items.add(buildTextItem("line_$i", "$prefix$text", pad = true, subtitle = trans))
+            items.add(buildTextItem("line_$i", "$prefix$text", pad = true, subtitle = secondLine(state, i)))
         }
     }
+
+    /** Second line under a lyric: pronunciation for Korean/Japanese, otherwise the translation. */
+    private fun secondLine(state: LyricsState, index: Int): String? {
+        val roman = state.romanizedLines?.getOrNull(index)?.takeIf { it.isNotBlank() }
+        return roman ?: state.translatedLines?.getOrNull(index)?.takeIf { it.isNotBlank() }
+    }
+
+    private fun countdownDots(dots: Int): String =
+        (1..Countdown.DOTS).joinToString("  ") { if (it <= dots) "●" else "○" }
 
     private fun buildTextItem(id: String, text: String, pad: Boolean = false, subtitle: String? = null): MediaBrowserCompat.MediaItem {
         val title = if (pad) text.padEnd(PAD_WIDTH) else text
@@ -436,6 +450,11 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         val posMs = getAaPositionMs()
 
         if (state.status == LyricsStatus.FOUND) {
+            val countdown = Countdown.compute(state.lines, posMs)
+            if (countdown.dots > 0) {
+                val upcoming = state.lines.getOrNull(countdown.nextIndex)?.text.orEmpty()
+                return "${countdownDots(countdown.dots)}\n$upcoming"
+            }
             val lineIdx = findLineIndex(state.lines, posMs)
             val line = state.lines.getOrNull(lineIdx)
             if (line != null) {
@@ -444,8 +463,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 } else {
                     line.text
                 }
-                val trans = state.translatedLines?.getOrNull(lineIdx)?.takeIf { it.isNotBlank() }
-                return if (trans != null) "$original\n$trans" else original
+                val second = secondLine(state, lineIdx)
+                return if (second != null) "$original\n$second" else original
             }
         }
 
@@ -456,8 +475,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                     .coerceIn(0, state.lines.size - 1)
             } else { 0 }
             val original = state.lines[idx].text
-            val trans = state.translatedLines?.getOrNull(idx)?.takeIf { it.isNotBlank() }
-            return if (trans != null) "$original\n$trans" else original
+            val second = secondLine(state, idx)
+            return if (second != null) "$original\n$second" else original
         }
 
         return when (state.status) {
@@ -635,8 +654,13 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         val lineChanged = win.currentIdx != displayedCurrentIdx
         val karaokeActive = aaKaraokeEnabled && state.status == LyricsStatus.FOUND
             && state.lines.getOrNull(state.currentIndex)?.words?.isNotEmpty() == true
+        val dots = if (state.status == LyricsStatus.FOUND) {
+            Countdown.compute(state.lines, getAaPositionMs()).dots
+        } else 0
+        val dotsChanged = dots != displayedDots
+        displayedDots = dots
 
-        if (!windowChanged && !lineChanged && !statusChanged && !karaokeActive) return
+        if (!windowChanged && !lineChanged && !statusChanged && !karaokeActive && !dotsChanged) return
 
         displayedWindowStart = win.start
         displayedWindowEnd = win.end
