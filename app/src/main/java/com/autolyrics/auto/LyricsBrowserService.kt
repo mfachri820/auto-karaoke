@@ -66,6 +66,12 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         private const val SYNC_MINUS_ID = "sync_minus"
         private const val SYNC_PLUS_ID = "sync_plus"
         private const val SYNC_STEP_MS = 50L
+        private const val SONG_NEXT_ID = "song_next"
+        private const val SONG_PREVIOUS_ID = "song_previous"
+        private const val SONG_RESTART_ID = "song_restart"
+        private const val MENU_TITLE = "⟳ Sync & songs"
+        private const val MENU_SUBTITLE = "Timing, next or previous song"
+        private const val PREVIOUS_SONG_DELAY_MS = 350L
         private const val WINDOW_SIZE = 3
         private const val PLAIN_WINDOW_SIZE = 4
         private const val PAD_WIDTH = 60
@@ -157,7 +163,9 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             return
         }
 
-        if (parentId == SYNC_MINUS_ID || parentId == SYNC_PLUS_ID) {
+        if (parentId == SYNC_MINUS_ID || parentId == SYNC_PLUS_ID ||
+            parentId == SONG_NEXT_ID || parentId == SONG_PREVIOUS_ID || parentId == SONG_RESTART_ID
+        ) {
             result.sendResult(items)
             return
         }
@@ -168,20 +176,23 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             }
             LyricsStatus.LOADING -> {
                 addTrackHeader(state, items)
-                items.add(buildTextItem("loading", "Loading lyrics…"))
+                items.add(buildTextItem("loading", "Finding lyrics…"))
+                items.add(buildBrowsableItem(SYNC_MENU_ID, MENU_TITLE, MENU_SUBTITLE))
             }
             LyricsStatus.NOT_FOUND -> {
                 addTrackHeader(state, items)
-                items.add(buildTextItem("not_found", "No lyrics found for this track"))
+                items.add(buildTextItem("not_found", "No lyrics found for this song"))
+                items.add(buildBrowsableItem(SYNC_MENU_ID, MENU_TITLE, MENU_SUBTITLE))
             }
             LyricsStatus.ERROR -> {
                 addTrackHeader(state, items)
-                items.add(buildTextItem("error", "Error loading lyrics"))
+                items.add(buildTextItem("error", "Couldn't load lyrics"))
+                items.add(buildBrowsableItem(SYNC_MENU_ID, MENU_TITLE, MENU_SUBTITLE))
             }
             LyricsStatus.FOUND -> {
                 addTrackHeader(state, items)
                 buildWindowedLyrics(state, items)
-                items.add(buildBrowsableItem(SYNC_MENU_ID, "⟳ Sync", "Adjust offset"))
+                items.add(buildBrowsableItem(SYNC_MENU_ID, MENU_TITLE, MENU_SUBTITLE))
             }
             LyricsStatus.PLAIN_ONLY -> {
                 addTrackHeader(state, items)
@@ -208,7 +219,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                         items.add(buildTextItem("line_$i", "    $text", pad = true, subtitle = secondLine(state, i)))
                     }
                 }
-                items.add(buildBrowsableItem(SYNC_MENU_ID, "⟳ Sync", "Adjust offset"))
+                items.add(buildBrowsableItem(SYNC_MENU_ID, MENU_TITLE, MENU_SUBTITLE))
             }
         }
 
@@ -248,6 +259,12 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
         items.add(buildTextItem(SYNC_MINUS_ID, "⏪  − 50ms"))
         items.add(buildTextItem(SYNC_PLUS_ID, "⏩  + 50ms"))
+
+        if (state.track != null) {
+            items.add(buildTextItem(SONG_NEXT_ID, "⏭  Next song"))
+            items.add(buildTextItem(SONG_PREVIOUS_ID, "⏮  Previous song"))
+            items.add(buildTextItem(SONG_RESTART_ID, "↺  Start this song again"))
+        }
     }
 
     private fun addTrackHeader(
@@ -739,6 +756,28 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 notifyChildrenChanged(ROOT_ID)
                 notifyChildrenChanged(SYNC_MENU_ID)
                 return
+            }
+
+            when (mediaId) {
+                SONG_NEXT_ID -> {
+                    getActiveMediaController()?.transportControls?.skipToNext()
+                    return
+                }
+                SONG_RESTART_ID -> {
+                    getActiveMediaController()?.transportControls?.seekTo(0)
+                    return
+                }
+                SONG_PREVIOUS_ID -> {
+                    // Music apps restart the current song on "previous" unless it just started,
+                    // so jump to the start first to make sure we really go back one song.
+                    val controls = getActiveMediaController()?.transportControls ?: return
+                    controls.seekTo(0)
+                    scope.launch {
+                        delay(PREVIOUS_SONG_DELAY_MS)
+                        controls.skipToPrevious()
+                    }
+                    return
+                }
             }
 
             if (!mediaId.startsWith("line_")) return
