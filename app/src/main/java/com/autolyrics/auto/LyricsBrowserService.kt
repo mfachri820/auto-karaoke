@@ -72,6 +72,9 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         private const val MENU_TITLE = "⟳ Sync & songs"
         private const val MENU_SUBTITLE = "Timing, next or previous song"
         private const val PREVIOUS_SONG_DELAY_MS = 350L
+        /** About two lines of the media card's big title text. */
+        private const val CARD_MAX_CHARS = 34
+        private const val LAST_LINE_MS = 6_000L
         private const val WINDOW_SIZE = 3
         private const val PLAIN_WINDOW_SIZE = 4
         private const val PAD_WIDTH = 60
@@ -463,45 +466,146 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         lastKaraokeText = null
     }
 
-    private fun getSubtitleText(state: LyricsState): String {
-        val posMs = getAaPositionMs()
+    // --- Media card (the small player next to Maps) ---
 
-        if (state.status == LyricsStatus.FOUND) {
-            val countdown = Countdown.compute(state.lines, posMs)
+    /** Big bold line and small line on the media card. */
+    private data class CardText(val title: String, val subtitle: String)
+
+    private fun songLabel(state: LyricsState): String {
+        val track = state.track ?: return ""
+        return if (track.artist.isNotBlank()) "${track.title} — ${track.artist}" else track.title
+    }
+
+    /** What to sing for a line: the pronunciation when there is one, else the lyric. */
+    private fun singText(state: LyricsState, index: Int): String {
+        val line = state.lines.getOrNull(index) ?: return ""
+        val roman = state.romanizedLines?.getOrNull(index)?.takeIf { it.isNotBlank() }
+        return (roman ?: line.text).ifBlank { "♪" }
+    }
+
+    private fun nextVocalIndex(lines: List<LyricLine>, after: Int): Int {
+        for (i in (after + 1) until lines.size) {
+            if (Countdown.isVocal(lines[i])) return i
+        }
+        return -1
+    }
+
+    /**
+     * The card shows the current lyric as its big title and the next lyric underneath,
+     * so lyrics stay readable next to Maps. Long lines are cut into pieces that fit
+     * the card and move along with the singing.
+     */
+    private fun getCardText(state: LyricsState): CardText {
+        val song = songLabel(state)
+        val posMs = getAaPositionMs()
+        val lines = state.lines
+
+        if (state.status == LyricsStatus.FOUND && lines.isNotEmpty()) {
+            val countdown = Countdown.compute(lines, posMs)
             if (countdown.dots > 0) {
-                val upcoming = state.lines.getOrNull(countdown.nextIndex)?.text.orEmpty()
-                return "${countdownDots(countdown.dots)}\n$upcoming"
+                return CardText(countdownDots(countdown.dots), firstChunk(singText(state, countdown.nextIndex)))
             }
-            val lineIdx = findLineIndex(state.lines, posMs)
-            val line = state.lines.getOrNull(lineIdx)
-            if (line != null) {
-                val original = if (aaKaraokeEnabled && line.words.isNotEmpty()) {
-                    buildKaraokeText(line, lineIdx, posMs, SUBTITLE_KARAOKE_WINDOW_MS)
-                } else {
-                    line.text
-                }
-                val second = secondLine(state, lineIdx)
-                return if (second != null) "$original\n$second" else original
+            val idx = findLineIndex(lines, posMs)
+            if (idx < 0) {
+                val first = nextVocalIndex(lines, -1)
+                return CardText(song, if (first >= 0) firstChunk(singText(state, first)) else "")
             }
+            val line = lines[idx]
+            val endMs = lines.getOrNull(idx + 1)?.timeMs ?: (line.timeMs + LAST_LINE_MS)
+            val text = singText(state, idx)
+            val usesOriginal = state.romanizedLines?.getOrNull(idx).isNullOrBlank()
+            val title = currentChunk(text, line, usesOriginal, endMs, posMs)
+            val next = nextVocalIndex(lines, idx)
+            return CardText(title, if (next >= 0) firstChunk(singText(state, next)) else song)
         }
 
-        if (state.status == LyricsStatus.PLAIN_ONLY && state.lines.isNotEmpty()) {
+        if (state.status == LyricsStatus.PLAIN_ONLY && lines.isNotEmpty()) {
             val durationMs = state.track?.durationMs ?: 0
             val idx = if (durationMs > 0) {
-                ((posMs.toFloat() / durationMs) * state.lines.size).toInt()
-                    .coerceIn(0, state.lines.size - 1)
-            } else { 0 }
-            val original = state.lines[idx].text
-            val second = secondLine(state, idx)
-            return if (second != null) "$original\n$second" else original
+                ((posMs.toFloat() / durationMs) * lines.size).toInt().coerceIn(0, lines.size - 1)
+            } else 0
+            val subtitle = if (idx + 1 < lines.size) firstChunk(singText(state, idx + 1)) else song
+            return CardText(firstChunk(singText(state, idx)), subtitle)
         }
 
-        return when (state.status) {
-            LyricsStatus.LOADING -> "Loading lyrics…"
+        val status = when (state.status) {
+            LyricsStatus.LOADING -> "Finding lyrics…"
             LyricsStatus.NOT_FOUND -> "No lyrics found"
-            LyricsStatus.ERROR -> "Error loading lyrics"
+            LyricsStatus.ERROR -> "Couldn't load lyrics"
             else -> ""
         }
+        return CardText(song, status)
+    }
+
+    /** The piece of a long line being sung right now. */
+    private fun currentChunk(
+        text: String,
+        line: LyricLine,
+        usesOriginal: Boolean,
+        endMs: Long,
+        posMs: Long
+    ): String {
+        val chunks = splitIntoChunks(text, CARD_MAX_CHARS)
+        if (chunks.size <= 1) return chunks.firstOrNull() ?: text
+
+        // Word timings say exactly where the singer is.
+        if (usesOriginal && line.words.isNotEmpty()) {
+            var wordIdx = -1
+            for (i in line.words.indices) {
+                if (line.words[i].timeMs <= posMs) wordIdx = i else break
+            }
+            if (wordIdx >= 0) {
+                var charPos = 0
+                for (i in 0 until wordIdx) charPos += line.words[i].text.length + 1
+                var acc = 0
+                for (chunk in chunks) {
+                    acc += chunk.length + 1
+                    if (charPos < acc) return chunk
+                }
+                return chunks.last()
+            }
+        }
+
+        // Otherwise spread the pieces over the line's time (singers finish a bit early).
+        val span = ((endMs - line.timeMs) * 0.85).toLong()
+        if (span <= 0) return chunks.first()
+        val frac = ((posMs - line.timeMs).toFloat() / span).coerceIn(0f, 0.999f)
+        return chunks[(frac * chunks.size).toInt().coerceIn(0, chunks.size - 1)]
+    }
+
+    private fun firstChunk(text: String): String =
+        splitIntoChunks(text, CARD_MAX_CHARS).firstOrNull() ?: text
+
+    /** Splits text into roughly even pieces of at most [max] characters, on word boundaries. */
+    private fun splitIntoChunks(text: String, max: Int): List<String> {
+        val clean = text.trim()
+        if (clean.length <= max) return listOf(clean)
+        val pieces = (clean.length + max - 1) / max
+        val target = minOf(max, clean.length / pieces + 6)
+
+        val out = mutableListOf<String>()
+        val sb = StringBuilder()
+        for (raw in clean.split(' ')) {
+            if (raw.isEmpty()) continue
+            var word = raw
+            // Text without spaces (e.g. Japanese) is cut by length.
+            while (word.length > max) {
+                if (sb.isNotEmpty()) {
+                    out += sb.toString()
+                    sb.clear()
+                }
+                out += word.substring(0, max)
+                word = word.substring(max)
+            }
+            if (sb.isNotEmpty() && sb.length + 1 + word.length > target) {
+                out += sb.toString()
+                sb.clear()
+            }
+            if (sb.isNotEmpty()) sb.append(' ')
+            sb.append(word)
+        }
+        if (sb.isNotEmpty()) out += sb.toString()
+        return if (out.isEmpty()) listOf(clean) else out
     }
 
     // --- MediaSession management ---
@@ -516,13 +620,6 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             if (track.durationMs > 0) {
                 metaBuilder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, track.durationMs)
             }
-
-            val displayTitle = if (track.artist.isNotBlank()) {
-                "${track.title} — ${track.artist}"
-            } else {
-                track.title
-            }
-            metaBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, displayTitle)
         }
 
         val art = state.albumArt ?: lastAlbumArt
@@ -532,6 +629,15 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         }
 
         return metaBuilder
+    }
+
+    private fun putCard(metaBuilder: MediaMetadataCompat.Builder, card: CardText) {
+        if (card.title.isNotBlank()) {
+            metaBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, card.title)
+        }
+        if (card.subtitle.isNotBlank()) {
+            metaBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, card.subtitle)
+        }
     }
 
     private fun updateMediaSession(state: LyricsState) {
@@ -544,15 +650,9 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         }
 
         val metaBuilder = buildBaseMetadata(state)
-
-        val subtitleText = getSubtitleText(state)
-        if (subtitleText.isNotBlank()) {
-            metaBuilder.putString(
-                MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE,
-                subtitleText
-            )
-        }
-        lastSubtitleText = subtitleText
+        val card = getCardText(state)
+        putCard(metaBuilder, card)
+        lastSubtitleText = "${card.title}\n${card.subtitle}"
 
         mediaSession.setMetadata(metaBuilder.build())
         mediaSession.setPlaybackState(buildPlaybackState(state))
@@ -563,17 +663,13 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         if (!state.isPlaying) return
         if (state.status != LyricsStatus.FOUND && state.status != LyricsStatus.PLAIN_ONLY) return
 
-        val subtitleText = getSubtitleText(state)
-        if (subtitleText == lastSubtitleText) return
-        lastSubtitleText = subtitleText
+        val card = getCardText(state)
+        val key = "${card.title}\n${card.subtitle}"
+        if (key == lastSubtitleText) return
+        lastSubtitleText = key
 
         val metaBuilder = buildBaseMetadata(state)
-        if (subtitleText.isNotBlank()) {
-            metaBuilder.putString(
-                MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE,
-                subtitleText
-            )
-        }
+        putCard(metaBuilder, card)
         mediaSession.setMetadata(metaBuilder.build())
         mediaSession.setPlaybackState(buildPlaybackState(state))
     }
