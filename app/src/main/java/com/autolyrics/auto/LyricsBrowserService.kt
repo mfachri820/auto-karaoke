@@ -16,6 +16,7 @@ import androidx.media.MediaBrowserServiceCompat
 import com.autolyrics.lyrics.Countdown
 import com.autolyrics.media.MediaTracker
 import com.autolyrics.model.LyricLine
+import com.autolyrics.model.LyricWord
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import kotlinx.coroutines.*
@@ -491,9 +492,10 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     }
 
     /**
-     * The card shows the current lyric as its big title and the next lyric underneath,
-     * so lyrics stay readable next to Maps. Long lines are cut into pieces that fit
-     * the card and move along with the singing.
+     * The card shows the piece being sung as its big title and the piece that comes
+     * right after it underneath, so lyrics stay readable next to Maps. Long lines are
+     * cut into pieces that fit the card and move along with the singing; the small
+     * line shows the rest of the current line before moving on to the next line.
      */
     private fun getCardText(state: LyricsState): CardText {
         val song = songLabel(state)
@@ -514,9 +516,11 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             val endMs = lines.getOrNull(idx + 1)?.timeMs ?: (line.timeMs + LAST_LINE_MS)
             val text = singText(state, idx)
             val usesOriginal = state.romanizedLines?.getOrNull(idx).isNullOrBlank()
-            val title = currentChunk(text, line, usesOriginal, endMs, posMs)
-            val next = nextVocalIndex(lines, idx)
-            return CardText(title, if (next >= 0) firstChunk(singText(state, next)) else song)
+            val pos = chunkPosition(text, line.words.takeIf { usesOriginal }, line.timeMs, endMs, posMs)
+            val upNext = pos.chunks.getOrNull(pos.index + 1)
+                ?: nextVocalIndex(lines, idx).takeIf { it >= 0 }?.let { firstChunk(singText(state, it)) }
+                ?: song
+            return CardText(pos.chunks[pos.index], upNext)
         }
 
         if (state.status == LyricsStatus.PLAIN_ONLY && lines.isNotEmpty()) {
@@ -524,8 +528,13 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             val idx = if (durationMs > 0) {
                 ((posMs.toFloat() / durationMs) * lines.size).toInt().coerceIn(0, lines.size - 1)
             } else 0
-            val subtitle = if (idx + 1 < lines.size) firstChunk(singText(state, idx + 1)) else song
-            return CardText(firstChunk(singText(state, idx)), subtitle)
+            // Untimed lyrics: assume each line gets an equal share of the song.
+            val perLineMs = if (durationMs > 0) durationMs / lines.size else LAST_LINE_MS
+            val startMs = idx * perLineMs
+            val pos = chunkPosition(singText(state, idx), null, startMs, startMs + perLineMs, posMs)
+            val upNext = pos.chunks.getOrNull(pos.index + 1)
+                ?: if (idx + 1 < lines.size) firstChunk(singText(state, idx + 1)) else song
+            return CardText(pos.chunks[pos.index], upNext)
         }
 
         val status = when (state.status) {
@@ -537,40 +546,46 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         return CardText(song, status)
     }
 
-    /** The piece of a long line being sung right now. */
-    private fun currentChunk(
+    /** A line cut into card-sized pieces, and which piece is being sung now. */
+    private data class ChunkPosition(val chunks: List<String>, val index: Int)
+
+    /**
+     * Finds the piece of a long line being sung right now. [words] are the line's word
+     * timings when they match [text]; without them the pieces are spread over the line's time.
+     */
+    private fun chunkPosition(
         text: String,
-        line: LyricLine,
-        usesOriginal: Boolean,
+        words: List<LyricWord>?,
+        startMs: Long,
         endMs: Long,
         posMs: Long
-    ): String {
-        val chunks = splitIntoChunks(text, CARD_MAX_CHARS)
-        if (chunks.size <= 1) return chunks.firstOrNull() ?: text
+    ): ChunkPosition {
+        val chunks = splitIntoChunks(text, CARD_MAX_CHARS).ifEmpty { listOf(text) }
+        if (chunks.size <= 1) return ChunkPosition(chunks, 0)
 
         // Word timings say exactly where the singer is.
-        if (usesOriginal && line.words.isNotEmpty()) {
+        if (!words.isNullOrEmpty()) {
             var wordIdx = -1
-            for (i in line.words.indices) {
-                if (line.words[i].timeMs <= posMs) wordIdx = i else break
+            for (i in words.indices) {
+                if (words[i].timeMs <= posMs) wordIdx = i else break
             }
             if (wordIdx >= 0) {
                 var charPos = 0
-                for (i in 0 until wordIdx) charPos += line.words[i].text.length + 1
+                for (i in 0 until wordIdx) charPos += words[i].text.length + 1
                 var acc = 0
-                for (chunk in chunks) {
+                chunks.forEachIndexed { i, chunk ->
                     acc += chunk.length + 1
-                    if (charPos < acc) return chunk
+                    if (charPos < acc) return ChunkPosition(chunks, i)
                 }
-                return chunks.last()
+                return ChunkPosition(chunks, chunks.lastIndex)
             }
         }
 
         // Otherwise spread the pieces over the line's time (singers finish a bit early).
-        val span = ((endMs - line.timeMs) * 0.85).toLong()
-        if (span <= 0) return chunks.first()
-        val frac = ((posMs - line.timeMs).toFloat() / span).coerceIn(0f, 0.999f)
-        return chunks[(frac * chunks.size).toInt().coerceIn(0, chunks.size - 1)]
+        val span = ((endMs - startMs) * 0.85).toLong()
+        if (span <= 0) return ChunkPosition(chunks, 0)
+        val frac = ((posMs - startMs).toFloat() / span).coerceIn(0f, 0.999f)
+        return ChunkPosition(chunks, (frac * chunks.size).toInt().coerceIn(0, chunks.lastIndex))
     }
 
     private fun firstChunk(text: String): String =
